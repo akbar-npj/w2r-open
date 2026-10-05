@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=W2R Open Schematics
+GenericName=PCB Boardview Viewer
+Comment=Offline schematic and PCB boardview viewer
+Exec=w2r-open %F
+TryExec=w2r-open
+Icon=w2r-open
+Terminal=false
+Categories=Development;Electronics;Engineering;
+Keywords=PCB;boardview;schematic;repair;netlist;
+StartupNotify=true
+StartupWMClass=w2r-open
+MimeType=application/x-boardview-brd;application/x-boardview-bvr;

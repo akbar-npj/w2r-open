@@ -1,0 +1,23 @@
+# Build output
+/build/
+/build-*/
+/dist/
+CMakeCache.txt
+CMakeFiles/
+*.o
+*.a
+*.so
+*.user
+
+# PlatformIO (firmware build tree)
+firmware/rffe-probe/.pio/
+
+# Proprietary vendor firmware — extracted from the W2R Solutions app and NOT redistributed.
+# The open replacement is firmware/rffe-open-*.bin.
+firmware/rffe-esp32-*.bin
+
+# Editor / OS cruft
+.vscode/
+.idea/
+*.swp
+.DS_Store

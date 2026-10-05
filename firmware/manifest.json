@@ -1,0 +1,11 @@
+{
+  "version": "1.0.0",
+  "file": "rffe-open-1.0.0.bin",
+  "sha256": "c5847aec570b2d590c8220b0291454b371a535f41493065725f69b202a07ec41",
+  "offset": 65536,
+  "chip": "esp32",
+  "flashSize": "4MB",
+  "license": "MIT",
+  "source": "rffe-probe/",
+  "notes": "W2R Open RFFE probe firmware. Clean-room, MIT-licensed replacement for the vendor's rffe-esp32-1.0.1.bin. Application partition only; the bootloader, partition table and boot_app0 come from the Arduino ESP32 core. This is the Arduino export's .ino.bin, which is flashed at 0x10000. Build from firmware/rffe-probe with PlatformIO (pio run)."
+}

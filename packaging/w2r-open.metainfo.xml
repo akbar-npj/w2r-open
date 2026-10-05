@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.w2ropen.W2ROpen</id>
+  <name>W2R Open Schematics</name>
+  <summary>Offline schematic and PCB boardview viewer</summary>
+  <description>
+    <p>
+      W2R Open is an offline viewer for PCB boardviews and schematic PDFs, aimed at board-level
+      repair work. It renders boardviews with pins, nets and diode readings, cross-probes between
+      the PCB and schematic views, and browses a local library of boards and schematics —
+      including files stored inside .rar/.zip/.7z archives.
+    </p>
+    <p>Runs entirely locally: no accounts, no cloud, no telemetry.</p>
+  </description>
+  <launchable type="desktop-id">w2r-open.desktop</launchable>
+  <url type="homepage">https://github.com/OpenBoardView/OpenBoardView</url>
+  <categories>
+    <category>Development</category>
+    <category>Electronics</category>
+    <category>Engineering</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+</component>

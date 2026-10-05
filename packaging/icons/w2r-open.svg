@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <rect width="256" height="256" rx="48" fill="#12161c"/>
+  <rect x="34" y="34" width="188" height="188" rx="14" fill="#1b2430" stroke="#3f7fd0" stroke-width="4"/>
+  <!-- IC -->
+  <rect x="96" y="88" width="64" height="64" rx="6" fill="#2f8f5b" stroke="#7fe0a8" stroke-width="3"/>
+  <!-- pads around the IC -->
+  <g fill="#d05a50">
+    <circle cx="80" cy="104" r="5"/><circle cx="80" cy="128" r="5"/><circle cx="80" cy="152" r="5"/>
+    <circle cx="176" cy="104" r="5"/><circle cx="176" cy="128" r="5"/><circle cx="176" cy="152" r="5"/>
+    <circle cx="112" cy="72" r="5"/><circle cx="136" cy="72" r="5"/><circle cx="160" cy="72" r="5"/>
+    <circle cx="112" cy="184" r="5"/><circle cx="136" cy="184" r="5"/><circle cx="160" cy="184" r="5"/>
+  </g>
+  <g fill="#5aa05a">
+    <circle cx="64" cy="60" r="5"/><circle cx="192" cy="60" r="5"/>
+    <circle cx="64" cy="196" r="5"/><circle cx="192" cy="196" r="5"/>
+  </g>
+  <!-- traces -->
+  <g stroke="#4f86c6" stroke-width="2.5" fill="none" opacity="0.8">
+    <path d="M96 120 H64"/><path d="M160 136 H192"/>
+    <path d="M128 88 V64"/><path d="M128 152 V184"/>
+  </g>
+</svg>
