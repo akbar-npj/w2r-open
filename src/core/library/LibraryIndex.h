@@ -1,5 +1,5 @@
 // Local library index: discovers boardviews and schematics under one or more roots
-// (default: /home/shaanair/Projects/Schematics), including files inside .rar/.zip/.7z
+// (default: ~/Projects/Schematics), including files inside .rar/.zip/.7z
 // archives. Archive member listings are cached on disk so rescans are cheap.
 #pragma once
 

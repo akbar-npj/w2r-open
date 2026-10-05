@@ -2,7 +2,7 @@
 # are not shipped with the repository, so the sample-dependent tests are only registered
 # when the directory exists. Point it at your own boardviews with
 #   -DW2R_SAMPLE_DIR=/path/to/samples
-set(W2R_SAMPLE_DIR "/home/shaanair/Projects/Schematics/Apple"
+set(W2R_SAMPLE_DIR "$ENV{HOME}/Projects/Schematics/Apple"
     CACHE PATH "Directory containing sample boardviews for tests")
 
 if(EXISTS "${W2R_SAMPLE_DIR}")

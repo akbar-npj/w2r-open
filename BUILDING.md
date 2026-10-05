@@ -93,7 +93,7 @@ Useful CMake options:
 | `CMAKE_BUILD_TYPE` | `Release` | `Release` or `Debug` |
 | `CMAKE_INSTALL_PREFIX` | `/usr/local` | Install prefix |
 | `BUILD_TESTING` | `ON` | Build the CTest suite |
-| `W2R_SAMPLE_DIR` | `/home/shaanair/Projects/Schematics/Apple` | Sample boardviews used by tests |
+| `W2R_SAMPLE_DIR` | `$HOME/Projects/Schematics/Apple` | Sample boardviews used by tests |
 
 ### Optional Qt modules
 

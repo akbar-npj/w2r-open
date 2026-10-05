@@ -5,6 +5,18 @@ work. It is a clean-room C++/Qt6 reimplementation of the proprietary Windows app
 *W2R Solutions (Way2Repair)*, with the remote-account and cloud features removed: everything
 runs locally, with no accounts, no telemetry and no network access.
 
+## Get the source
+
+```sh
+git clone https://github.com/akbar-npj/w2r-open.git
+cd w2r-open
+./build.sh --clean --test
+```
+
+Requires a C++17 toolchain, CMake 3.21+ and Qt 6.5+; see **[BUILDING.md](BUILDING.md)** for
+per-distro prerequisites and options. The probe firmware and its source are included, so no
+extra downloads are needed.
+
 ## Features
 
 - **Boardview rendering** — parses obfuscated `.brd` and `BVRAW_FORMAT_3` `.bvr` files.
