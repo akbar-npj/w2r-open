@@ -52,7 +52,7 @@ Without them the app still builds; the corresponding UI is disabled or shows a p
 ## Quick start
 
 ```sh
-git clone <repository-url> w2r-open
+git clone https://github.com/akbar-npj/w2r-open.git
 cd w2r-open
 ./build.sh --clean --test
 ```
