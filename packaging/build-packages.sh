@@ -119,6 +119,12 @@ if command -v rpmbuild >/dev/null 2>&1; then
 
     rpmbuild --define "_topdir $RPMDIR" -bb "$RPMDIR/SPECS/${NAME}.spec"
     cp "$RPMDIR"/RPMS/*/*.rpm "$OUT/" 2>/dev/null || true
+
+    # Also copy RPM to standard rpmbuild directory (~/rpmbuild/RPMS/<arch>)
+    USER_RPMBUILD="$(rpm --eval '%{_topdir}' 2>/dev/null || echo "$HOME/rpmbuild")"
+    mkdir -p "$USER_RPMBUILD/RPMS/$HOST_ARCH"
+    cp "$RPMDIR"/RPMS/*/*.rpm "$USER_RPMBUILD/RPMS/$HOST_ARCH/" 2>/dev/null || true
+    say "Copied RPM to $USER_RPMBUILD/RPMS/$HOST_ARCH"
 else
     say "rpmbuild not found — skipping .rpm"
 fi
