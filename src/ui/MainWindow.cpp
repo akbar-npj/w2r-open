@@ -5,25 +5,32 @@
 #include "core/Settings.h"
 #include "ui/LibraryPanel.h"
 #include "ui/NetInspector.h"
+#include "ui/OccurrencesPanel.h"
 #include "ui/PcbView.h"
 #include "ui/PdfView.h"
 #include "ui/PreferencesDialog.h"
 #include "ui/RffePanel.h"
+#include "ui/ThemeEditorDialog.h"
 
 #include <QAction>
+#include <QActionGroup>
+#include <QApplication>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFutureWatcher>
 #include <QLabel>
+#include <QLocale>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QSplitter>
 #include <QStatusBar>
 #include <QToolBar>
+#include <QTranslator>
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
@@ -42,6 +49,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 	buildLibraryDock();
 	buildNetDock();
 	buildRffeDock();
+	buildOccurrencesDock();
 
 	m_statusLabel = new QLabel(this);
 	statusBar()->addPermanentWidget(m_statusLabel);
@@ -50,6 +58,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 	connect(m_view, &PcbView::pinSelected, this, &MainWindow::onPinSelected);
 	connect(m_view, &PcbView::netSelected, this, &MainWindow::onNetSelected);
 	connect(m_pdf, &PdfView::netSearched, this, &MainWindow::onPdfNetSearched);
+	connect(m_pdf2, &PdfView::netSearched, this, &MainWindow::onPdfNetSearched);
 
 	// Restore saved window geometry and dock layout.
 	const QByteArray geo = Settings::windowGeometry();
@@ -69,6 +78,14 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 		m_view->setShowRatsnest(m_ratsnestAction->isChecked());
 	}
 
+	applyTreeFont(Settings::treeFontPointSize());
+
+	// Restore animation preferences.
+	m_view->setAnimationsEnabled(Settings::animationsEnabled());
+	m_view->setSpotlightDim(Settings::spotlightDim());
+	m_view->setNetPulse(Settings::netPulse());
+	m_view->setTraceReveal(Settings::traceReveal());
+
 	startLibraryScan();
 }
 
@@ -77,27 +94,55 @@ void MainWindow::buildCentralViews()
 	m_splitter = new QSplitter(Qt::Horizontal, this);
 	m_view = new PcbView(m_splitter);
 	m_pdf = new PdfView(m_splitter);
+	m_pdf2 = new PdfView(m_splitter);
 	m_splitter->addWidget(m_view);
 	m_splitter->addWidget(m_pdf);
+	m_splitter->addWidget(m_pdf2);
 	m_splitter->setStretchFactor(0, 1);
 	m_splitter->setStretchFactor(1, 1);
+	m_splitter->setStretchFactor(2, 1);
+	m_pdf2->hide(); // only shown in the PDF/PDF split mode
 	setCentralWidget(m_splitter);
 }
 
 void MainWindow::setViewMode(const QString &mode)
 {
-	if (mode == QLatin1String("pcb")) {
-		m_view->show();
-		m_pdf->hide();
-	} else if (mode == QLatin1String("pdf")) {
-		m_view->hide();
-		m_pdf->show();
-	} else {
-		m_view->show();
-		m_pdf->show();
+	if (!mode.isEmpty()) m_viewMode = mode;
+
+	QVector<QWidget *> order;
+	if (m_viewMode == QLatin1String("pcb"))
+		order = {m_view};
+	else if (m_viewMode == QLatin1String("pdf"))
+		order = {m_pdf};
+	else if (m_viewMode == QLatin1String("pdfpdf"))
+		order = {m_pdf, m_pdf2};
+	else
+		order = {m_view, m_pdf}; // "both": split PDF / PCB
+
+	if (m_swapped) std::reverse(order.begin(), order.end());
+
+	m_view->hide();
+	m_pdf->hide();
+	m_pdf2->hide();
+	for (QWidget *w : order) w->show();
+
+	// Re-insert visible panes in order, then the hidden ones (hidden panes take no space).
+	int pos = 0;
+	for (QWidget *w : order) m_splitter->insertWidget(pos++, w);
+	const QVector<QWidget *> all = {m_view, m_pdf, m_pdf2};
+	for (QWidget *w : all)
+		if (!order.contains(w)) m_splitter->insertWidget(pos++, w);
+
+	if (order.size() == 2) {
 		const int half = qMax(200, m_splitter->width() / 2);
 		m_splitter->setSizes({half, half});
 	}
+}
+
+void MainWindow::swapPanes()
+{
+	m_swapped = !m_swapped;
+	setViewMode(QString());
 }
 
 void MainWindow::buildLibraryDock()
@@ -147,6 +192,45 @@ void MainWindow::buildRffeDock()
 	connect(m_rffe, &RffePanel::deviceDetected, this, &MainWindow::onRffeDevice);
 	if (m_rffeAction)
 		connect(m_rffeDock, &QDockWidget::visibilityChanged, m_rffeAction, &QAction::setChecked);
+
+	// --- RFFE <-> boardview wiring ---
+	if (m_view) {
+		// Marks collected in the panel are highlighted/blinked on the canvas.
+		m_view->setRffeMarkSettings(rffe::MarkSettings::load());
+		m_view->setRffeMarkedNets(m_rffe->markedNets());
+		connect(m_rffe, &RffePanel::markedNetsChanged, m_view, &PcbView::setRffeMarkedNets);
+		connect(m_rffe, &RffePanel::blinkRequested, m_view, &PcbView::blinkRffeNets);
+		connect(m_rffe, &RffePanel::markSettingsChanged, this, [this] {
+			m_view->setRffeMarkSettings(rffe::MarkSettings::load());
+		});
+		// Boardview context-menu actions feed the panel.
+		connect(m_view, &PcbView::rffeTestPointRequested, this,
+		        [this](const QString &refDes, const QString &net) {
+			        m_rffe->addTestPoint(refDes, net, static_cast<int>(rffe::Role::None));
+		        });
+		connect(m_view, &PcbView::rffeRoleRequested, this,
+		        [this](const QString &net, int role) { m_rffe->setTestPointRole(net, role); });
+		connect(m_view, &PcbView::netSelected, m_rffe, &RffePanel::setCurrentNet);
+	}
+}
+
+void MainWindow::buildOccurrencesDock()
+{
+	auto *dock = new QDockWidget(QStringLiteral("Occurrences"), this);
+	dock->setObjectName(QStringLiteral("occDock"));
+	dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable |
+	                  QDockWidget::DockWidgetClosable);
+	m_occ = new OccurrencesPanel(dock);
+	dock->setWidget(m_occ);
+	addDockWidget(Qt::BottomDockWidgetArea, dock);
+	dock->hide(); // appears when a schematic search yields hits
+
+	// Primary PDF pane drives the panel; clicking an entry jumps the PDF to it.
+	connect(m_pdf, &PdfView::occurrencesChanged, this, [this, dock](const QString &net, const QStringList &labels) {
+		m_occ->setOccurrences(net, labels);
+		if (!labels.isEmpty()) dock->show();
+	});
+	connect(m_occ, &OccurrencesPanel::occurrenceActivated, m_pdf, &PdfView::activateMatch);
 }
 
 void MainWindow::onRffeDevice(const QString &id)
@@ -262,15 +346,20 @@ void MainWindow::buildToolbar()
 	m_diodeAction = diode;
 
 	tb->addSeparator();
-	QAction *both = tb->addAction(QStringLiteral("Both"));
-	both->setShortcut(QKeySequence(QStringLiteral("Ctrl+3")));
-	connect(both, &QAction::triggered, this, [this] { setViewMode(QStringLiteral("both")); });
 	QAction *pcbOnly = tb->addAction(QStringLiteral("PCB Only"));
 	pcbOnly->setShortcut(QKeySequence(QStringLiteral("Ctrl+1")));
 	connect(pcbOnly, &QAction::triggered, this, [this] { setViewMode(QStringLiteral("pcb")); });
 	QAction *pdfOnly = tb->addAction(QStringLiteral("PDF Only"));
 	pdfOnly->setShortcut(QKeySequence(QStringLiteral("Ctrl+2")));
 	connect(pdfOnly, &QAction::triggered, this, [this] { setViewMode(QStringLiteral("pdf")); });
+	QAction *splitPcb = tb->addAction(QStringLiteral("PDF | PCB"));
+	splitPcb->setShortcut(QKeySequence(QStringLiteral("Ctrl+3")));
+	connect(splitPcb, &QAction::triggered, this, [this] { setViewMode(QStringLiteral("both")); });
+	QAction *splitPdf = tb->addAction(QStringLiteral("PDF | PDF"));
+	splitPdf->setShortcut(QKeySequence(QStringLiteral("Ctrl+4")));
+	connect(splitPdf, &QAction::triggered, this, [this] { setViewMode(QStringLiteral("pdfpdf")); });
+	QAction *swap = tb->addAction(QStringLiteral("Swap"));
+	connect(swap, &QAction::triggered, this, &MainWindow::swapPanes);
 
 	tb->addSeparator();
 	QAction *ratsnest = tb->addAction(QStringLiteral("Ratsnest"));
@@ -319,6 +408,75 @@ void MainWindow::onThemeChanged(int index)
 	Settings::setThemeName(m_themes.names().value(index));
 }
 
+void MainWindow::rebuildThemeCombo()
+{
+	if (!m_themeCombo) return;
+	const int previous = m_themeCombo->currentIndex();
+	m_themeCombo->blockSignals(true);
+	m_themeCombo->clear();
+	m_themeCombo->addItems(m_themes.names());
+	const int target = (previous >= 0 && previous < m_themeCombo->count()) ? previous : 0;
+	m_themeCombo->setCurrentIndex(target);
+	m_themeCombo->blockSignals(false);
+}
+
+// Applies the theme at index, syncs the combo and persists the choice.
+void MainWindow::onThemeCreate()
+{
+	const int base = m_themeCombo ? m_themeCombo->currentIndex() : 0;
+	Theme draft = m_themes.theme(base);
+	draft.name = QStringLiteral("Custom");
+	draft.raw = QJsonObject(); // new theme: start from a clean object
+
+	ThemeEditorDialog dlg(draft, this);
+	if (dlg.exec() != QDialog::Accepted) return;
+
+	const int index = m_themes.addOrUpdate(dlg.theme());
+	m_themes.saveUserThemes();
+	rebuildThemeCombo();
+	m_themeCombo->setCurrentIndex(index);
+	setThemeByName(m_themes.names().value(index));
+	Settings::setThemeName(m_themes.names().value(index));
+	statusBar()->showMessage(QStringLiteral("Theme created: %1").arg(m_themes.names().value(index)), 5000);
+}
+
+void MainWindow::onThemeEdit()
+{
+	const int index = m_themeCombo ? m_themeCombo->currentIndex() : -1;
+	if (index < 0) return;
+
+	ThemeEditorDialog dlg(m_themes.theme(index), this);
+	if (dlg.exec() != QDialog::Accepted) return;
+
+	// Editing a built-in theme saves a copy as a new user theme; editing a user theme
+	// updates it in place.
+	const int saved = m_themes.addOrUpdate(dlg.theme(), index);
+	m_themes.saveUserThemes();
+	rebuildThemeCombo();
+	m_themeCombo->setCurrentIndex(saved);
+	setThemeByName(m_themes.names().value(saved));
+	Settings::setThemeName(m_themes.names().value(saved));
+	statusBar()->showMessage(QStringLiteral("Theme saved: %1").arg(m_themes.names().value(saved)), 5000);
+}
+
+void MainWindow::onThemeDelete()
+{
+	const int index = m_themeCombo ? m_themeCombo->currentIndex() : -1;
+	if (!m_themes.isUserTheme(index)) {
+		QMessageBox::information(this, QStringLiteral("Delete Theme"),
+		                         QStringLiteral("Built-in themes cannot be deleted."));
+		return;
+	}
+	m_themes.removeTheme(index);
+	m_themes.saveUserThemes();
+	rebuildThemeCombo();
+	const int sel = qBound(0, index, qMax(0, m_themeCombo->count() - 1));
+	m_themeCombo->setCurrentIndex(sel);
+	setThemeByName(m_themes.names().value(sel));
+	Settings::setThemeName(m_themes.names().value(sel));
+	statusBar()->showMessage(QStringLiteral("Theme deleted."), 5000);
+}
+
 void MainWindow::setRffeVisible(bool on)
 {
 	if (m_rffeAction) m_rffeAction->setChecked(on);
@@ -326,6 +484,22 @@ void MainWindow::setRffeVisible(bool on)
 		m_rffeDock->setVisible(on);
 		if (on) m_rffeDock->raise();
 	}
+}
+
+void MainWindow::setAnimations(const QString &spec)
+{
+	const QStringList flags = spec.split(QLatin1Char(','), Qt::SkipEmptyParts);
+	const bool spotlight = flags.contains(QStringLiteral("spotlight"));
+	const bool pulse = flags.contains(QStringLiteral("netPulse"));
+	const bool reveal = flags.contains(QStringLiteral("traceReveal"));
+
+	m_view->setAnimationsEnabled(true);
+	m_view->setSpotlightDim(spotlight);
+	m_view->setNetPulse(pulse);
+	m_view->setTraceReveal(reveal);
+	if (m_spotlightAction) m_spotlightAction->setChecked(spotlight);
+	if (m_netPulseAction) m_netPulseAction->setChecked(pulse);
+	if (m_traceRevealAction) m_traceRevealAction->setChecked(reveal);
 }
 
 void MainWindow::onPreferences()
@@ -363,9 +537,81 @@ void MainWindow::toggleFullScreen()
 		showFullScreen();
 }
 
+void MainWindow::applyTreeFont(int pointSize)
+{
+	pointSize = qBound(0, pointSize, 32);
+	m_treeFontPointSize = pointSize;
+	if (m_library) m_library->setTreeFontPointSize(pointSize);
+	if (m_nets) m_nets->setTreeFontPointSize(pointSize);
+	Settings::setTreeFontPointSize(pointSize);
+}
+
+void MainWindow::onTreeFontIncrease()
+{
+	int base = m_treeFontPointSize;
+	if (base <= 0) base = QApplication::font().pointSize();
+	if (base <= 0) base = 10;
+	applyTreeFont(base + 1);
+}
+
+void MainWindow::onTreeFontDecrease()
+{
+	int base = m_treeFontPointSize;
+	if (base <= 0) base = QApplication::font().pointSize();
+	if (base <= 0) base = 10;
+	applyTreeFont(qMax(6, base - 1));
+}
+
+void MainWindow::onTreeFontReset()
+{
+	applyTreeFont(0);
+}
+
+void MainWindow::retranslateMenus()
+{
+	if (m_fileMenu) m_fileMenu->setTitle(tr("&File"));
+	if (m_viewMenu) m_viewMenu->setTitle(tr("&View"));
+	if (m_themeMenu) m_themeMenu->setTitle(tr("&Theme"));
+	if (m_helpMenu) m_helpMenu->setTitle(tr("&Help"));
+	if (m_languageMenu) m_languageMenu->setTitle(tr("&Language"));
+}
+
+void MainWindow::onLanguageSelected(const QString &code)
+{
+	Settings::setLanguage(code);
+
+	// Swap in the translator for the chosen language so menus retranslate where strings
+	// use tr(). Missing .qm files are not an error: the UI stays in its source language.
+	auto *translator = new QTranslator(this);
+	const QString name = QStringLiteral("w2r-open_") + code;
+	const QStringList dirs = {
+	    QCoreApplication::applicationDirPath() + QStringLiteral("/translations"),
+	    QCoreApplication::applicationDirPath() + QStringLiteral("/../share/w2r-open/translations"),
+	    QCoreApplication::applicationDirPath(),
+	};
+	bool loaded = false;
+	for (const QString &dir : dirs) {
+		if (translator->load(name, dir)) {
+			loaded = true;
+			break;
+		}
+	}
+	if (loaded) {
+		if (m_translator) qApp->removeTranslator(m_translator);
+		qApp->installTranslator(translator);
+		m_translator = translator;
+	} else {
+		delete translator;
+	}
+
+	retranslateMenus();
+	statusBar()->showMessage(tr("Language set to %1").arg(code), 5000);
+}
+
 void MainWindow::buildMenus()
 {
-	QMenu *file = menuBar()->addMenu(QStringLiteral("&File"));
+	QMenu *file = menuBar()->addMenu(tr("&File"));
+	m_fileMenu = file;
 	QAction *open = file->addAction(QStringLiteral("&Open Board..."));
 	open->setShortcut(QKeySequence::Open);
 	connect(open, &QAction::triggered, this, &MainWindow::onOpenBoard);
@@ -388,13 +634,105 @@ void MainWindow::buildMenus()
 	quit->setShortcut(QKeySequence::Quit);
 	connect(quit, &QAction::triggered, this, &QWidget::close);
 
-	QMenu *help = menuBar()->addMenu(QStringLiteral("&Help"));
-	QAction *about = help->addAction(QStringLiteral("&About"));
+	QMenu *view = menuBar()->addMenu(tr("&View"));
+	m_viewMenu = view;
+	QAction *splitPcb = view->addAction(QStringLiteral("Split PDF / &PCB"));
+	splitPcb->setShortcut(QKeySequence(QStringLiteral("Ctrl+3")));
+	connect(splitPcb, &QAction::triggered, this, [this] { setViewMode(QStringLiteral("both")); });
+	QAction *splitPdf = view->addAction(QStringLiteral("Split PDF / PDF"));
+	splitPdf->setShortcut(QKeySequence(QStringLiteral("Ctrl+4")));
+	connect(splitPdf, &QAction::triggered, this, [this] { setViewMode(QStringLiteral("pdfpdf")); });
+	QAction *pcbOnly = view->addAction(QStringLiteral("PCB Only"));
+	pcbOnly->setShortcut(QKeySequence(QStringLiteral("Ctrl+1")));
+	connect(pcbOnly, &QAction::triggered, this, [this] { setViewMode(QStringLiteral("pcb")); });
+	QAction *pdfOnly = view->addAction(QStringLiteral("PDF Only"));
+	pdfOnly->setShortcut(QKeySequence(QStringLiteral("Ctrl+2")));
+	connect(pdfOnly, &QAction::triggered, this, [this] { setViewMode(QStringLiteral("pdf")); });
+	QAction *swap = view->addAction(QStringLiteral("&Swap Panes"));
+	connect(swap, &QAction::triggered, this, &MainWindow::swapPanes);
+
+	view->addSeparator();
+	QMenu *anim = view->addMenu(QStringLiteral("&Animations"));
+	m_animMasterAction = anim->addAction(QStringLiteral("Enable Animations"));
+	m_animMasterAction->setCheckable(true);
+	m_animMasterAction->setChecked(Settings::animationsEnabled());
+	connect(m_animMasterAction, &QAction::toggled, this, [this](bool on) {
+		Settings::setAnimationsEnabled(on);
+		m_view->setAnimationsEnabled(on);
+	});
+	m_spotlightAction = anim->addAction(QStringLiteral("Spotlight (dim others)"));
+	m_spotlightAction->setCheckable(true);
+	m_spotlightAction->setChecked(Settings::spotlightDim());
+	connect(m_spotlightAction, &QAction::toggled, this, [this](bool on) {
+		Settings::setSpotlightDim(on);
+		m_view->setSpotlightDim(on);
+	});
+	m_netPulseAction = anim->addAction(QStringLiteral("Net pulse"));
+	m_netPulseAction->setCheckable(true);
+	m_netPulseAction->setChecked(Settings::netPulse());
+	connect(m_netPulseAction, &QAction::toggled, this, [this](bool on) {
+		Settings::setNetPulse(on);
+		m_view->setNetPulse(on);
+	});
+	m_traceRevealAction = anim->addAction(QStringLiteral("Trace reveal"));
+	m_traceRevealAction->setCheckable(true);
+	m_traceRevealAction->setChecked(Settings::traceReveal());
+	connect(m_traceRevealAction, &QAction::toggled, this, [this](bool on) {
+		Settings::setTraceReveal(on);
+		m_view->setTraceReveal(on);
+	});
+
+	view->addSeparator();
+	QMenu *treeFont = view->addMenu(QStringLiteral("Tree &Font"));
+	QAction *fontInc = treeFont->addAction(QStringLiteral("Increase"));
+	connect(fontInc, &QAction::triggered, this, &MainWindow::onTreeFontIncrease);
+	QAction *fontDec = treeFont->addAction(QStringLiteral("Decrease"));
+	connect(fontDec, &QAction::triggered, this, &MainWindow::onTreeFontDecrease);
+	QAction *fontReset = treeFont->addAction(QStringLiteral("Reset"));
+	connect(fontReset, &QAction::triggered, this, &MainWindow::onTreeFontReset);
+
+	view->addSeparator();
+	QAction *full = view->addAction(QStringLiteral("&Full Screen"));
+	full->setShortcut(Qt::Key_F11);
+	connect(full, &QAction::triggered, this, &MainWindow::toggleFullScreen);
+
+	QMenu *theme = menuBar()->addMenu(tr("&Theme"));
+	m_themeMenu = theme;
+	QAction *themeCreate = theme->addAction(QStringLiteral("&Create Theme..."));
+	connect(themeCreate, &QAction::triggered, this, &MainWindow::onThemeCreate);
+	QAction *themeEdit = theme->addAction(QStringLiteral("&Edit Current Theme..."));
+	connect(themeEdit, &QAction::triggered, this, &MainWindow::onThemeEdit);
+	QAction *themeDelete = theme->addAction(QStringLiteral("&Delete Current Theme"));
+	connect(themeDelete, &QAction::triggered, this, &MainWindow::onThemeDelete);
+
+	QMenu *help = menuBar()->addMenu(tr("&Help"));
+	m_helpMenu = help;
+
+	// Help -> Language: same language set as the original app (en/ar/ru/ta/th).
+	m_languageMenu = help->addMenu(tr("&Language"));
+	auto *langGroup = new QActionGroup(this);
+	langGroup->setExclusive(true);
+	struct Lang { const char *code; const char *label; };
+	const Lang langs[] = {{"en", "English"}, {"ar", "العربية"}, {"ru", "Русский"},
+	                      {"ta", "தமிழ்"}, {"th", "ไทย"}};
+	const QString current = Settings::language();
+	for (const Lang &l : langs) {
+		QAction *a = m_languageMenu->addAction(QString::fromUtf8(l.label));
+		a->setCheckable(true);
+		a->setChecked(current == QLatin1String(l.code) ||
+		              (current.isEmpty() && QLocale::system().name().startsWith(QLatin1String(l.code))));
+		const QString code = QString::fromLatin1(l.code);
+		connect(a, &QAction::triggered, this, [this, code] { onLanguageSelected(code); });
+		langGroup->addAction(a);
+	}
+
+	help->addSeparator();
+	QAction *about = help->addAction(tr("&About"));
 	connect(about, &QAction::triggered, this, [this] {
-		QMessageBox::about(this, QStringLiteral("About W2R Open"),
-		                   QStringLiteral("<b>W2R Open Schematics &amp; PCB Viewer</b><br>"
-		                                  "Offline Linux boardview viewer.<br><br>"
-		                                  "Boardview parsers adapted from OpenBoardView (MIT)."));
+		QMessageBox::about(this, tr("About W2R Open"),
+		                   tr("<b>W2R Open Schematics &amp; PCB Viewer</b><br>"
+		                      "Offline Linux boardview viewer.<br><br>"
+		                      "Boardview parsers adapted from OpenBoardView (MIT)."));
 	});
 }
 

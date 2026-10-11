@@ -53,14 +53,17 @@ qt_add_executable(w2r-open
   src/core/library/ArchiveBackend.cpp
   src/core/library/LibraryIndex.cpp
   src/core/rffe/RffeFlasher.cpp
+  src/core/rffe/RffeModel.cpp
   src/core/rffe/RffeProbe.cpp
   src/ui/LibraryPanel.cpp
   src/ui/MainWindow.cpp
   src/ui/NetInspector.cpp
+  src/ui/OccurrencesPanel.cpp
   src/ui/PcbView.cpp
   src/ui/PdfView.cpp
   src/ui/PreferencesDialog.cpp
   src/ui/RffePanel.cpp
+  src/ui/ThemeEditorDialog.cpp
 )
 
 # Embedded builtin PCB themes (imported from the original app).

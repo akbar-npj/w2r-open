@@ -6,6 +6,7 @@
 
 #include "core/Board.h"
 
+#include <QFont>
 #include <QString>
 #include <QWidget>
 
@@ -27,6 +28,9 @@ class NetInspector : public QWidget {
 	// Programmatic selection (used by the test harness / cross-probe).
 	void selectNet(const QString &net);
 
+	// Tree font size in points; 0 restores the application default.
+	void setTreeFontPointSize(int pointSize);
+
   signals:
 	void netActivated(const QString &net);
 	void pinActivated(const QString &part, const QString &pin);
@@ -41,6 +45,8 @@ class NetInspector : public QWidget {
 
 	QLineEdit *m_filter = nullptr;
 	QTreeWidget *m_tree = nullptr;
+	QFont m_defaultFont;
+	int m_treeFontPointSize = 0;
 	Board m_board;
 	bool m_hasBoard = false;
 	bool m_populating = false;

@@ -5,20 +5,29 @@
 //   w2r-open [file]           GUI viewer
 #include "core/BoardLoader.h"
 #include "core/DiodeSheet.h"
+#include "core/Settings.h"
+#include "core/Theme.h"
 #include "core/library/LibraryIndex.h"
 #include "core/rffe/RffeFlasher.h"
+#include "core/rffe/RffeModel.h"
 #include "core/rffe/RffeProbe.h"
 #include "ui/MainWindow.h"
 #include "ui/PcbView.h"
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QFile>
 #include <QImage>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLibraryInfo>
 #include <QLocale>
 #include <QPainter>
 #include <QString>
 #include <QStringList>
+#include <QTemporaryDir>
+#include <QTemporaryFile>
 #include <QTimer>
 #include <QTranslator>
 
@@ -28,10 +37,12 @@
 namespace {
 
 // Loads Qt's own translations plus any w2r-open_<locale>.qm shipped alongside the binary.
+// The language chosen in Help -> Language (Settings::language) wins over the system locale.
 // Absent translations are not an error — the UI simply stays in its source language.
 void installTranslators(QApplication &app)
 {
-	const QString locale = QLocale::system().name();
+	const QString saved = w2r::Settings::language();
+	const QString locale = saved.isEmpty() ? QLocale::system().name() : saved;
 
 	auto *qtTr = new QTranslator(&app);
 	if (qtTr->load(QStringLiteral("qt_") + locale, QLibraryInfo::path(QLibraryInfo::TranslationsPath)))
@@ -255,6 +266,8 @@ int runRenderWindow(const QString &outPath, int w, int h, int delayMs)
 	const QByteArray themeEnv = qgetenv("W2R_THEME");
 	if (!themeEnv.isEmpty()) win.setThemeByName(QString::fromLocal8Bit(themeEnv));
 	if (!qgetenv("W2R_RFFE").isEmpty()) win.setRffeVisible(true);
+	const QByteArray animEnv = qgetenv("W2R_ANIM");
+	if (!animEnv.isEmpty()) win.setAnimations(QString::fromLocal8Bit(animEnv));
 
 	QTimer::singleShot(delayMs, [&] {
 		QImage img(w, h, QImage::Format_ARGB32);
@@ -323,6 +336,148 @@ int runRffeInfo(int argc, char **argv)
 		std::printf("\n");
 	}
 	return 0;
+}
+
+// Round-trips a theme through the pcb_themes.json schema and back, verifying that edited
+// colours and preserved unknown keys survive serialisation. Used by the test suite.
+int runThemeSelftest()
+{
+	w2r::ThemeManager source;
+	if (source.count() < 1) {
+		std::fprintf(stderr, "error: no built-in themes loaded\n");
+		return 1;
+	}
+
+	w2r::Theme t = source.theme(0);
+	t.name = QStringLiteral("__selftest__");
+	t.pin = QColor(0xff112233);
+	t.background = QColor(0xff445566);
+	if (!t.layers.isEmpty()) t.layers[0] = QColor(0xff778899);
+
+	// Serialise to a {"themes":[...]} document and reload it through the public loader.
+	QJsonObject root;
+	root.insert(QStringLiteral("themes"), QJsonArray{t.toJson()});
+
+	QTemporaryFile tmp;
+	if (!tmp.open()) {
+		std::fprintf(stderr, "error: could not create temp file\n");
+		return 1;
+	}
+	tmp.write(QJsonDocument(root).toJson());
+	tmp.flush();
+
+	w2r::ThemeManager reloaded;
+	if (!reloaded.loadFromFile(tmp.fileName())) {
+		std::fprintf(stderr, "FAIL: could not reload serialised theme\n");
+		return 1;
+	}
+
+	const w2r::Theme &r = reloaded.theme(0);
+	int failures = 0;
+	auto check = [&failures](const char *what, bool ok) {
+		if (!ok) {
+			std::fprintf(stderr, "FAIL: %s\n", what);
+			++failures;
+		}
+	};
+	check("name", r.name == QStringLiteral("__selftest__"));
+	check("pin", r.pin == QColor(0xff112233));
+	check("background", r.background == QColor(0xff445566));
+	check("layer1", r.layers.isEmpty() || r.layers[0] == QColor(0xff778899));
+	// The original "ratsnet" key spelling must survive.
+	check("ratsnet key", t.toJson().contains(QStringLiteral("ratsnet")));
+
+	if (failures == 0) std::printf("theme round-trip: OK\n");
+	return failures == 0 ? 0 : 1;
+}
+
+// Round-trips the RFFE shields/test-points store through its JSON schema, verifying that
+// names, roles, expected devices and the per-user path survive serialisation. Test-suite aid.
+int runRffeSelftest()
+{
+	using namespace w2r::rffe;
+
+	int failures = 0;
+	auto check = [&failures](const char *what, bool ok) {
+		if (!ok) {
+			std::fprintf(stderr, "FAIL: %s\n", what);
+			++failures;
+		}
+	};
+
+	check("role clk", roleFromKey(QStringLiteral("clk")) == Role::Clock);
+	check("role v1v8", roleFromKey(QStringLiteral("v1v8")) == Role::V1V8);
+	check("role data", roleFromKey(QStringLiteral("data")) == Role::Data);
+	check("role key round-trip", roleKey(roleFromKey(QStringLiteral("v1v8"))) == QStringLiteral("v1v8"));
+
+	Store out;
+	Shield a;
+	a.name = QStringLiteral("SHIELD_RFFE1");
+	a.hidden = false;
+	a.added = true;
+	a.expectedDevices << QStringLiteral("00123") << QStringLiteral("00456");
+	TestPoint tp;
+	tp.refDes = QStringLiteral("C2406_E");
+	tp.net = QStringLiteral("PP_1V8_LDO6");
+	tp.role = Role::V1V8;
+	a.testPoints << tp;
+	TestPoint clk;
+	clk.refDes = QStringLiteral("R1201_E");
+	clk.net = QStringLiteral("RFFE1_CLK");
+	clk.role = Role::Clock;
+	a.testPoints << clk;
+	out.addShield(a);
+
+	Shield b;
+	b.name = QStringLiteral("SHIELD_RFFE2");
+	b.hidden = true;
+	out.addShield(b);
+
+	Store in;
+	QString error;
+	if (!in.fromJson(out.toJson(), &error)) {
+		std::fprintf(stderr, "FAIL: fromJson: %s\n", error.toUtf8().constData());
+		return 1;
+	}
+
+	check("shield count", in.shields().size() == 2);
+	const Shield *r = nullptr;
+	for (const Shield &s : in.shields())
+		if (s.name == QStringLiteral("SHIELD_RFFE1")) r = &s;
+	check("shield found", r != nullptr);
+	if (r) {
+		check("shield added", r->added);
+		check("shield hidden", !r->hidden);
+		check("devices", r->expectedDevices == QStringList({QStringLiteral("00123"), QStringLiteral("00456")}));
+		check("tp count", r->testPoints.size() == 2);
+		check("tp ref", r->testPoints.value(0).refDes == QStringLiteral("C2406_E"));
+		check("tp net", r->testPoints.value(0).net == QStringLiteral("PP_1V8_LDO6"));
+		check("tp role", r->testPoints.value(0).role == Role::V1V8);
+		check("tp2 role", r->testPoints.value(1).role == Role::Clock);
+	}
+	check("hidden shield", in.shields().value(1).hidden);
+	check("visible tp count", in.visibleTestPointCount() == 2);
+
+	check("path ends with file",
+	      Store::path().endsWith(QStringLiteral("/rffe_testpoints.json")));
+
+	// On-disk round-trip into a throwaway XDG data home (AppLocalDataLocation follows it).
+	QTemporaryDir tmpDir;
+	if (tmpDir.isValid()) {
+		qputenv("XDG_DATA_HOME", tmpDir.path().toLocal8Bit());
+		const bool saved = out.save();
+		check("store saved to disk", saved);
+		check("store file exists", QFile::exists(Store::path()));
+		Store disk;
+		check("store reloaded", disk.load());
+		check("disk shield count", disk.shields().size() == 2);
+		check("disk marked nets", disk.markedNets().contains(QStringLiteral("PP_1V8_LDO6")));
+	} else {
+		std::fprintf(stderr, "note: skipped disk round-trip (no temp dir)\n");
+	}
+
+	if (failures == 0) std::printf("rffe store round-trip: OK\n");
+	return failures == 0 ? 0 : 1;
 }
 
 } // namespace
@@ -400,6 +555,12 @@ int main(int argc, char **argv)
 
 	// Report RFFE probe environment.
 	if (args.contains(QStringLiteral("--rffe-info"))) return runRffeInfo(argc, argv);
+
+	// Theme serialisation round-trip (test-suite aid).
+	if (args.contains(QStringLiteral("--theme-selftest"))) return runThemeSelftest();
+
+	// RFFE shields/test-points store round-trip (test-suite aid).
+	if (args.contains(QStringLiteral("--rffe-selftest"))) return runRffeSelftest();
 
 	QApplication app(argc, argv);
 	app.setApplicationName(QStringLiteral("w2r-open"));

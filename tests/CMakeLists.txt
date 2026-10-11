@@ -30,3 +30,9 @@ endif()
 
 # RFFE probe environment: serial support, bundled firmware and esptool discovery.
 add_test(NAME rffe_info COMMAND $<TARGET_FILE:w2r-open> --rffe-info)
+
+# Theme serialisation round-trip (create/edit/delete support).
+add_test(NAME theme_selftest COMMAND $<TARGET_FILE:w2r-open> --theme-selftest)
+
+# RFFE shields / test-points store round-trip.
+add_test(NAME rffe_selftest COMMAND $<TARGET_FILE:w2r-open> --rffe-selftest)

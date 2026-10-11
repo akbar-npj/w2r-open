@@ -47,6 +47,7 @@ NetInspector::NetInspector(QWidget *parent) : QWidget(parent)
 		}
 	});
 	layout->addWidget(m_tree);
+	m_defaultFont = m_tree->font();
 
 	auto *status = new QLabel(this);
 	status->setObjectName(QStringLiteral("netStatus"));
@@ -58,6 +59,15 @@ NetInspector::NetInspector(QWidget *parent) : QWidget(parent)
 void NetInspector::setStatus(const QString &text)
 {
 	if (auto *lbl = findChild<QLabel *>(QStringLiteral("netStatus"))) lbl->setText(text);
+}
+
+void NetInspector::setTreeFontPointSize(int pointSize)
+{
+	m_treeFontPointSize = pointSize;
+	QFont f = m_defaultFont;
+	if (pointSize > 0) f.setPointSize(pointSize);
+	m_tree->setFont(f);
+	repopulate(); // re-applies per-item fonts (bold ground nets) at the new size
 }
 
 void NetInspector::clearBoard()

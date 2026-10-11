@@ -7,10 +7,14 @@
 
 #include "core/Board.h"
 #include "core/Theme.h"
+#include "core/rffe/RffeModel.h"
 
 #include <QPointF>
 #include <QString>
+#include <QStringList>
 #include <QWidget>
+
+class QTimer;
 
 namespace w2r {
 
@@ -38,11 +42,25 @@ class PcbView : public QWidget {
 	void setShowRatsnest(bool on);
 	void selectNet(const QString &net);
 
+	// RFFE marking: highlight/blink a set of nets (the ones mapped to detected devices).
+	void setRffeMarkedNets(const QStringList &nets);
+	void setRffeMarkSettings(const rffe::MarkSettings &settings);
+	void blinkRffeNets();  // one blink pass over the marked nets (original: pcb.anim.rffeBlink)
+
+	// Canvas animations (original app: pcb.anim.*). The master switch gates them all.
+	void setAnimationsEnabled(bool on);
+	void setSpotlightDim(bool on);  // pcb.anim.spotlightDim
+	void setNetPulse(bool on);      // kpcb.anim.netPulse
+	void setTraceReveal(bool on);   // pcb.anim.traceReveal
+
 	QSize sizeHint() const override { return QSize(900, 700); }
 
   signals:
 	void pinSelected(int pinIndex);
 	void netSelected(const QString &net);
+	// RFFE boardview context-menu actions (original: "Get Test Point" / "Set as RFFE CLK|1V8").
+	void rffeTestPointRequested(const QString &refDes, const QString &net);
+	void rffeRoleRequested(const QString &net, int role);
 
   protected:
 	void paintEvent(QPaintEvent *event) override;
@@ -59,8 +77,12 @@ class PcbView : public QWidget {
 
 	void drawOutline(QPainter &p);
 	void drawParts(QPainter &p);
-	void drawPins(QPainter &p);
+	void drawPins(QPainter &p, bool selectedOnly = false);
 	void drawRatsnest(QPainter &p);
+	void drawRffeMarks(QPainter &p);
+	void showRffeMenu(const QPoint &globalPos);
+	void updateAnimTimer();
+	void onAnimTick();
 
 	Board m_board;
 	bool m_hasBoard = false;
@@ -77,8 +99,27 @@ class PcbView : public QWidget {
 	int m_selectedPin = -1;
 	int m_hoverPin = -1;
 
+	// Animation state.
+	bool m_animMaster = true;
+	bool m_spotlight = false;
+	bool m_netPulse = false;
+	bool m_traceReveal = false;
+	QTimer *m_animTimer = nullptr;
+	double m_pulsePhase = 0.0;
+	double m_revealPhase = 1.0;
+
 	bool m_panning = false;
 	QPointF m_lastMouse;
+
+	// RFFE marking state.
+	QStringList m_rffeMarkedNets;
+	rffe::MarkSettings m_rffeSettings;
+	bool m_rffeBlinkActive = false;
+	double m_rffeBlinkPhase = 0.0;
+	int m_rffeHoldTicks = 0;
+	QPointF m_pressPos;
+	bool m_pressMoved = false;
+	bool m_rightPress = false;
 };
 
 } // namespace w2r

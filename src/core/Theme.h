@@ -3,6 +3,7 @@
 #pragma once
 
 #include <QColor>
+#include <QJsonObject>
 #include <QString>
 #include <QVector>
 
@@ -28,6 +29,15 @@ struct Theme {
 	QColor partHighlightFill = QColor(0xff00a2e8);
 	QColor partHighlightBorder = QColor(0xffffffff);
 	QVector<QColor> layers; // 16 copper layers
+
+	// Original JSON object (when parsed from a file). Unknown keys the renderer does not
+	// model yet (base, baseLayer, componentFill, overridePinColors, refEdge, refPlate) are
+	// preserved here so round-tripping a theme never drops fields the original app expects.
+	QJsonObject raw;
+
+	// Serialises the theme back to the original pcb_themes.json schema, merging modelled
+	// fields into any preserved raw keys.
+	QJsonObject toJson() const;
 };
 
 class ThemeManager {
@@ -39,14 +49,31 @@ class ThemeManager {
 	// Loads the themes embedded in the executable (:/resources/themes.json).
 	bool loadBuiltin();
 
+	// User themes are persisted separately (Settings::userThemes) and appended after the
+	// read-only built-in set, mirroring the app's config/pcb_themes.json.
+	bool loadUserThemes();
+	bool saveUserThemes() const;
+
 	int count() const { return m_themes.size(); }
 	QStringList names() const;
 	const Theme &theme(int index) const;
 	int indexOfName(const QString &name) const;
 
+	// Number of leading built-in themes. User themes occupy indices >= builtinCount().
+	int builtinCount() const { return m_builtinCount; }
+	bool isUserTheme(int index) const { return index >= m_builtinCount && index < m_themes.size(); }
+
+	// Inserts a new user theme (index < 0) or replaces an existing one, returning its index.
+	int addOrUpdate(const Theme &theme, int index = -1);
+	// Removes a user theme. Built-in themes cannot be removed.
+	bool removeTheme(int index);
+
   private:
+	static QVector<Theme> parseThemes(const QByteArray &json);
 	void parse(const QByteArray &json);
+
 	QVector<Theme> m_themes;
+	int m_builtinCount = 0;
 };
 
 } // namespace w2r

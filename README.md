@@ -34,7 +34,17 @@ extra downloads are needed.
 - **RFFE probe** — talk to an ESP32 RFFE probe over USB serial, scan a phone's RF front end,
   and update the probe firmware in-app. The probe firmware is open source (see
   `firmware/rffe-probe/`).
-- **Themes, preferences, recent files, i18n scaffolding.**
+- **Split views** — PDF | PCB, PDF | PDF and single-pane modes, with one-click pane swapping.
+- **Occurrences panel** — every hit of a schematic search listed with page and surrounding
+  context; click an entry to jump the PDF to it.
+- **Canvas animations** — spotlight dim (darken everything but the selected net), net pulse and
+  animated trace reveal, with a master on/off switch (View → Animations).
+- **Themes** — pick a built-in PCB theme or create, edit and delete your own with a colour
+  editor. User themes are saved in the original `pcb_themes.json` schema and round-trip
+  losslessly (including fields the renderer does not model yet).
+- **Tree font sizing** — increase, decrease or reset the Net Inspector / Device Library fonts.
+- **Language menu** — switch the UI language (English, Arabic, Russian, Tamil, Thai).
+- **Preferences, recent files, i18n scaffolding.**
 
 ## Install
 
@@ -76,6 +86,7 @@ w2r-open --library "820-02443"        # index and search the library
 w2r-open --resolve "820-02443"        # resolve, extract and parse a board
 w2r-open --diode board.brd sheet.csv  # apply a diode sheet
 w2r-open --rffe-info                  # RFFE probe environment
+w2r-open --theme-selftest             # theme serialisation round-trip check
 ```
 
 ## Licence and provenance

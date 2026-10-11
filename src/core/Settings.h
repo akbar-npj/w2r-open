@@ -20,11 +20,33 @@ void setLibraryRoots(const QStringList &roots);
 QString themeName();
 void setThemeName(const QString &name);
 
+// User-created PCB themes, stored as the original pcb_themes.json document ({"themes":[...]}).
+QByteArray userThemes();
+void setUserThemes(const QByteArray &json);
+
 bool showDiodeReadings();
 void setShowDiodeReadings(bool on);
 
 bool showRatsnest();
 void setShowRatsnest(bool on);
+
+// Font size (points) for the Net Inspector and Library trees; 0 = application default.
+int treeFontPointSize();
+void setTreeFontPointSize(int pointSize);
+
+// UI language code (e.g. "en", "ar", "ru", "ta", "th"); empty = follow the system locale.
+QString language();
+void setLanguage(const QString &code);
+
+// PCB canvas animations (original app: pcb.anim.*).
+bool animationsEnabled();
+void setAnimationsEnabled(bool on);
+bool spotlightDim();
+void setSpotlightDim(bool on);
+bool netPulse();
+void setNetPulse(bool on);
+bool traceReveal();
+void setTraceReveal(bool on);
 
 // Window geometry / dock layout, stored as QWidget::saveGeometry()/saveState() blobs.
 QByteArray windowGeometry();

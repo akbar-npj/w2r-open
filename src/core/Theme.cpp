@@ -1,5 +1,7 @@
 #include "core/Theme.h"
 
+#include "core/Settings.h"
+
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -44,36 +46,43 @@ Theme defaultTheme()
 
 } // namespace
 
-ThemeManager::ThemeManager()
+QJsonObject Theme::toJson() const
 {
-	loadBuiltin();
-	if (m_themes.isEmpty()) m_themes.append(defaultTheme());
+	QJsonObject o = raw; // keep unknown keys (base, baseLayer, componentFill, refEdge, ...)
+	o.insert(QStringLiteral("name"), name);
+
+	auto put = [&o](const char *key, const QColor &c) {
+		o.insert(QLatin1String(key), c.name(QColor::HexArgb));
+	};
+	put("background", background);
+	put("boardFill", boardFill);
+	put("outline", outline);
+	put("partOutline", partOutline);
+	put("componentNameText", componentNameText);
+	put("pin", pin);
+	put("pinOutline", pinOutline);
+	put("pinText", pinText);
+	put("groundPin", groundPin);
+	put("ncPin", ncPin);
+	put("netText", netText);
+	put("silkscreen", silkscreen);
+	put("selectedPin", selectedPin);
+	put("sameNetPin", sameNetPin);
+	put("ratsnet", ratsnest); // original key spelling is "ratsnet"
+	put("partHighlightFill", partHighlightFill);
+	put("partHighlightBorder", partHighlightBorder);
+	for (int i = 0; i < layers.size(); ++i)
+		o.insert(QStringLiteral("layer%1").arg(i + 1), layers[i].name(QColor::HexArgb));
+	return o;
 }
 
-bool ThemeManager::loadBuiltin()
+QVector<Theme> ThemeManager::parseThemes(const QByteArray &json)
 {
-	QFile f(QStringLiteral(":/resources/themes.json"));
-	if (!f.open(QIODevice::ReadOnly)) return false;
-	parse(f.readAll());
-	return !m_themes.isEmpty();
-}
-
-bool ThemeManager::loadFromFile(const QString &path)
-{
-	QFile f(path);
-	if (!f.open(QIODevice::ReadOnly)) return false;
-	parse(f.readAll());
-	return !m_themes.isEmpty();
-}
-
-void ThemeManager::parse(const QByteArray &json)
-{
+	QVector<Theme> out;
 	const QJsonDocument doc = QJsonDocument::fromJson(json);
-	if (!doc.isObject()) return;
+	if (!doc.isObject()) return out;
 	const QJsonArray arr = doc.object().value(QStringLiteral("themes")).toArray();
-	if (arr.isEmpty()) return;
 
-	m_themes.clear();
 	for (const QJsonValue &v : arr) {
 		const QJsonObject o = v.toObject();
 		Theme t = defaultTheme();
@@ -101,8 +110,78 @@ void ThemeManager::parse(const QByteArray &json)
 			const QColor c = col(o, QStringLiteral("layer%1").arg(i), QColor(0xa75b8fd6));
 			t.layers.append(c);
 		}
-		m_themes.append(t);
+		t.raw = o;
+		out.append(t);
 	}
+	return out;
+}
+
+ThemeManager::ThemeManager()
+{
+	loadBuiltin();
+	if (m_themes.isEmpty()) m_themes.append(defaultTheme());
+	m_builtinCount = m_themes.size();
+	loadUserThemes();
+}
+
+bool ThemeManager::loadBuiltin()
+{
+	QFile f(QStringLiteral(":/resources/themes.json"));
+	if (!f.open(QIODevice::ReadOnly)) return false;
+	parse(f.readAll());
+	return !m_themes.isEmpty();
+}
+
+bool ThemeManager::loadFromFile(const QString &path)
+{
+	QFile f(path);
+	if (!f.open(QIODevice::ReadOnly)) return false;
+	parse(f.readAll());
+	return !m_themes.isEmpty();
+}
+
+void ThemeManager::parse(const QByteArray &json)
+{
+	const QVector<Theme> parsed = parseThemes(json);
+	if (parsed.isEmpty()) return;
+	m_themes = parsed;
+	m_builtinCount = m_themes.size();
+}
+
+bool ThemeManager::loadUserThemes()
+{
+	const QByteArray json = Settings::userThemes();
+	if (json.isEmpty()) return false;
+	const QVector<Theme> users = parseThemes(json);
+	for (const Theme &t : users) m_themes.append(t);
+	return !users.isEmpty();
+}
+
+bool ThemeManager::saveUserThemes() const
+{
+	QJsonArray arr;
+	for (int i = m_builtinCount; i < m_themes.size(); ++i) arr.append(m_themes[i].toJson());
+	QJsonObject root;
+	root.insert(QStringLiteral("themes"), arr);
+	Settings::setUserThemes(QJsonDocument(root).toJson(QJsonDocument::Compact));
+	return true;
+}
+
+int ThemeManager::addOrUpdate(const Theme &theme, int index)
+{
+	if (isUserTheme(index)) {
+		m_themes[index] = theme;
+		return index;
+	}
+	m_themes.append(theme);
+	return m_themes.size() - 1;
+}
+
+bool ThemeManager::removeTheme(int index)
+{
+	if (!isUserTheme(index)) return false;
+	m_themes.remove(index);
+	return true;
 }
 
 QStringList ThemeManager::names() const

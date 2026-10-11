@@ -33,6 +33,7 @@ LibraryPanel::LibraryPanel(QWidget *parent) : QWidget(parent)
 	m_tree->setUniformRowHeights(true);
 	connect(m_tree, &QTreeWidget::itemDoubleClicked, this, &LibraryPanel::onItemActivated);
 	layout->addWidget(m_tree);
+	m_defaultFont = m_tree->font();
 
 	auto *status = new QLabel(this);
 	status->setObjectName(QStringLiteral("libraryStatus"));
@@ -52,6 +53,15 @@ void LibraryPanel::setEntries(const QVector<LibraryEntry> &entries)
 {
 	m_entries = entries;
 	repopulate();
+}
+
+void LibraryPanel::setTreeFontPointSize(int pointSize)
+{
+	m_treeFontPointSize = pointSize;
+	QFont f = m_defaultFont;
+	if (pointSize > 0) f.setPointSize(pointSize);
+	m_tree->setFont(f);
+	repopulate(); // re-applies per-item fonts (bold brand rows) at the new size
 }
 
 void LibraryPanel::onFilterChanged(const QString &)

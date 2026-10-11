@@ -2,9 +2,11 @@
 
 #include <QFont>
 #include <QKeyEvent>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QTimer>
 #include <QToolTip>
 #include <QWheelEvent>
 
@@ -19,6 +21,70 @@ PcbView::PcbView(QWidget *parent) : QWidget(parent)
 	setFocusPolicy(Qt::StrongFocus);
 	setAutoFillBackground(false);
 	setMinimumSize(320, 240);
+
+	m_animTimer = new QTimer(this);
+	m_animTimer->setInterval(33); // ~30 fps
+	connect(m_animTimer, &QTimer::timeout, this, &PcbView::onAnimTick);
+}
+
+void PcbView::setAnimationsEnabled(bool on)
+{
+	m_animMaster = on;
+	updateAnimTimer();
+	update();
+}
+
+void PcbView::setSpotlightDim(bool on)
+{
+	m_spotlight = on;
+	update();
+}
+
+void PcbView::setNetPulse(bool on)
+{
+	m_netPulse = on;
+	updateAnimTimer();
+	update();
+}
+
+void PcbView::setTraceReveal(bool on)
+{
+	m_traceReveal = on;
+	if (on) m_revealPhase = 0.0;
+	updateAnimTimer();
+	update();
+}
+
+void PcbView::updateAnimTimer()
+{
+	const bool needPulse = m_animMaster && m_netPulse && !m_selectedNet.isEmpty();
+	const bool needReveal = m_animMaster && m_traceReveal && !m_selectedNet.isEmpty() && m_revealPhase < 1.0;
+	const bool needRffe = m_animMaster && m_rffeBlinkActive && !m_rffeMarkedNets.isEmpty();
+	const bool need = needPulse || needReveal || needRffe;
+	if (need && !m_animTimer->isActive())
+		m_animTimer->start();
+	else if (!need && m_animTimer->isActive())
+		m_animTimer->stop();
+}
+
+void PcbView::onAnimTick()
+{
+	if (m_animMaster && m_netPulse) m_pulsePhase += 0.18;
+	if (m_animMaster && m_traceReveal && m_revealPhase < 1.0) {
+		m_revealPhase = std::min(1.0, m_revealPhase + 0.05);
+	}
+	if (m_animMaster && m_rffeBlinkActive) {
+		m_rffeBlinkPhase += 1.0;
+		const double blinkTicks = std::max(1.0, m_rffeSettings.markBlinkMs / 33.0);
+		if (m_rffeBlinkPhase > blinkTicks) {
+			if (m_rffeHoldTicks > 0)
+				--m_rffeHoldTicks;
+			else
+				m_rffeBlinkActive = false;
+		}
+	}
+	updateAnimTimer();
+	update();
 }
 
 void PcbView::setTheme(const Theme &theme)
@@ -101,6 +167,32 @@ void PcbView::selectNet(const QString &net)
 {
 	if (m_selectedNet == net) return;
 	m_selectedNet = net;
+	if (m_traceReveal) m_revealPhase = 0.0; // replay the reveal for the new net
+	updateAnimTimer();
+	update();
+}
+
+void PcbView::setRffeMarkedNets(const QStringList &nets)
+{
+	m_rffeMarkedNets = nets;
+	updateAnimTimer();
+	update();
+}
+
+void PcbView::setRffeMarkSettings(const rffe::MarkSettings &settings)
+{
+	m_rffeSettings = settings;
+	update();
+}
+
+void PcbView::blinkRffeNets()
+{
+	if (m_rffeMarkedNets.isEmpty()) return;
+	m_rffeBlinkActive = true;
+	m_rffeBlinkPhase = 0.0;
+	// Hold the mark for markHoldMs after the blink; 0 clears as soon as the blink ends.
+	m_rffeHoldTicks = m_rffeSettings.markHoldMs > 0 ? m_rffeSettings.markHoldMs / 33 : 0;
+	updateAnimTimer();
 	update();
 }
 
@@ -186,6 +278,15 @@ void PcbView::paintEvent(QPaintEvent *)
 	drawParts(p);
 	drawPins(p);
 	if (m_showRatsnest && !m_selectedNet.isEmpty()) drawRatsnest(p);
+	if (!m_rffeMarkedNets.isEmpty()) drawRffeMarks(p);
+
+	// Spotlight dim (pcb.anim.spotlightDim): darken the board and re-draw only the
+	// selected net on top, so it stands out.
+	if (m_animMaster && m_spotlight && !m_selectedNet.isEmpty()) {
+		p.fillRect(rect(), QColor(0, 0, 0, 150));
+		drawPins(p, /*selectedOnly=*/true);
+		if (m_showRatsnest) drawRatsnest(p);
+	}
 
 	// HUD
 	p.setFont(QFont(QStringLiteral("Sans"), 9, QFont::Bold));
@@ -245,7 +346,7 @@ void PcbView::drawParts(QPainter &p)
 	}
 }
 
-void PcbView::drawPins(QPainter &p)
+void PcbView::drawPins(QPainter &p, bool selectedOnly)
 {
 	const QRect viewport = rect().adjusted(-8, -8, 8, 8);
 	p.setFont(QFont(QStringLiteral("Sans"), 7));
@@ -254,12 +355,14 @@ void PcbView::drawPins(QPainter &p)
 		const Pin &pin = m_board.pins[i];
 		if (pin.layer != m_showSide) continue;
 
+		const bool selected = !m_selectedNet.isEmpty() && pin.net == m_selectedNet;
+		if (selectedOnly && !selected) continue; // spotlight pass draws only the net
+
 		const QPointF sp = boardToScreen(pin.x, pin.y);
 		const double radius = std::max(1.6, (pin.radius * m_scale) / 2.0);
 		const QRectF pr(sp.x() - radius, sp.y() - radius, radius * 2, radius * 2);
 		if (!viewport.contains(sp.toPoint())) continue; // cull
 
-		const bool selected = !m_selectedNet.isEmpty() && pin.net == m_selectedNet;
 		const bool clicked = (i == m_selectedPin);
 		const bool hovered = (i == m_hoverPin);
 
@@ -278,7 +381,12 @@ void PcbView::drawPins(QPainter &p)
 			fill = m_theme.pin;
 		}
 
-		p.setPen(QPen(m_theme.pinOutline, selected || clicked ? 1.6 : 0.8));
+		double outlineWidth = (selected || clicked) ? 1.6 : 0.8;
+		// Net pulse (kpcb.anim.netPulse): breathe the selected net's outline.
+		if (m_animMaster && m_netPulse && selected)
+			outlineWidth = 1.4 + 1.2 * (0.5 + 0.5 * std::sin(m_pulsePhase));
+
+		p.setPen(QPen(m_theme.pinOutline, outlineWidth));
 		p.setBrush(fill);
 		p.drawEllipse(pr);
 
@@ -307,17 +415,97 @@ void PcbView::drawRatsnest(QPainter &p)
 	}
 	if (pts.size() < 2) return;
 
+	// Trace reveal (pcb.anim.traceReveal): grow the flylines out from the first pin.
+	const double frac = (m_animMaster && m_traceReveal) ? m_revealPhase : 1.0;
+	if (frac <= 0.0) return;
+
 	// Star from the first pin to every other pin on the net.
 	p.setPen(QPen(m_theme.ratsnest, 1.2, Qt::DashLine));
-	for (int i = 1; i < pts.size(); ++i) p.drawLine(pts[0], pts[i]);
+	for (int i = 1; i < pts.size(); ++i) {
+		const QPointF end = pts[0] + (pts[i] - pts[0]) * frac;
+		p.drawLine(pts[0], end);
+	}
+}
+
+void PcbView::drawRffeMarks(QPainter &p)
+{
+	if (m_rffeMarkedNets.isEmpty()) return;
+
+	// Intensity drives both the halo and the ring. While blinking we pulse; after the blink
+	// window we hold steady until markHoldMs elapses.
+	double intensity = 1.0;
+	if (m_animMaster && m_rffeBlinkActive) {
+		const double blinkTicks = std::max(1.0, m_rffeSettings.markBlinkMs / 33.0);
+		if (m_rffeBlinkPhase <= blinkTicks)
+			intensity = 0.35 + 0.65 * (0.5 + 0.5 * std::sin(m_rffeBlinkPhase * 0.6));
+	}
+
+	const QColor accent(0xff3b82f6); // RFFE accent
+	for (const Pin &pin : m_board.pins) {
+		if (pin.layer != m_showSide) continue;
+		if (!m_rffeMarkedNets.contains(pin.net)) continue;
+		const QPointF sp = boardToScreen(pin.x, pin.y);
+		const double radius = std::max(2.0, (pin.radius * m_scale) / 2.0);
+
+		if (m_rffeSettings.markHalo) {
+			QColor halo = accent;
+			halo.setAlphaF(std::min(1.0, 0.18 + 0.32 * intensity));
+			p.setPen(Qt::NoPen);
+			p.setBrush(halo);
+			const double hr = radius + 4.0 + 3.0 * intensity;
+			p.drawEllipse(sp, hr, hr);
+		}
+		QColor ring = accent;
+		ring.setAlphaF(std::min(1.0, 0.55 + 0.45 * intensity));
+		p.setBrush(Qt::NoBrush);
+		p.setPen(QPen(ring, 2.0));
+		p.drawEllipse(sp, radius + 2.0, radius + 2.0);
+	}
+}
+
+void PcbView::showRffeMenu(const QPoint &globalPos)
+{
+	if (m_selectedPin < 0 || m_selectedPin >= m_board.pins.size()) return;
+	const Pin &pin = m_board.pins[m_selectedPin];
+
+	QMenu menu(this);
+	QAction *getTp = menu.addAction(tr("Get Test Point"));
+	menu.addSeparator();
+	QAction *clk = menu.addAction(tr("Set '%1' as RFFE CLK").arg(pin.net));
+	QAction *v18 = menu.addAction(tr("Set '%1' as RFFE 1V8").arg(pin.net));
+	clk->setEnabled(!pin.net.isEmpty());
+	v18->setEnabled(!pin.net.isEmpty());
+
+	QAction *chosen = menu.exec(globalPos);
+	if (!chosen) return;
+	if (chosen == getTp)
+		emit rffeTestPointRequested(pin.part, pin.net);
+	else if (chosen == clk)
+		emit rffeRoleRequested(pin.net, static_cast<int>(rffe::Role::Clock));
+	else if (chosen == v18)
+		emit rffeRoleRequested(pin.net, static_cast<int>(rffe::Role::V1V8));
 }
 
 void PcbView::mousePressEvent(QMouseEvent *event)
 {
-	if (event->button() == Qt::MiddleButton || event->button() == Qt::RightButton) {
+	if (event->button() == Qt::MiddleButton) {
 		m_panning = true;
 		m_lastMouse = event->position();
 		setCursor(Qt::ClosedHandCursor);
+		return;
+	}
+	if (event->button() == Qt::RightButton) {
+		m_rightPress = true;
+		m_pressMoved = false;
+		m_pressPos = event->position();
+		const int idx = pinAt(event->position());
+		m_selectedPin = idx;
+		if (idx >= 0) {
+			m_selectedNet = m_board.pins[idx].net;
+			emit pinSelected(idx);
+			emit netSelected(m_selectedNet);
+		}
+		update();
 		return;
 	}
 	if (event->button() == Qt::LeftButton) {
@@ -330,12 +518,29 @@ void PcbView::mousePressEvent(QMouseEvent *event)
 		} else {
 			m_selectedNet.clear();
 		}
+		if (m_traceReveal) m_revealPhase = 0.0;
+		updateAnimTimer();
 		update();
 	}
 }
 
 void PcbView::mouseMoveEvent(QMouseEvent *event)
 {
+	if (m_rightPress) {
+		if (!m_pressMoved && (event->position() - m_pressPos).manhattanLength() > 6) {
+			m_pressMoved = true;
+			m_panning = true;
+			m_lastMouse = event->position();
+			setCursor(Qt::ClosedHandCursor);
+		}
+		if (m_panning) {
+			m_pan += event->position() - m_lastMouse;
+			m_lastMouse = event->position();
+			update();
+		}
+		return;
+	}
+
 	if (m_panning) {
 		const QPointF d = event->position() - m_lastMouse;
 		m_pan += d;
@@ -360,8 +565,18 @@ void PcbView::mouseMoveEvent(QMouseEvent *event)
 	}
 }
 
-void PcbView::mouseReleaseEvent(QMouseEvent *)
+void PcbView::mouseReleaseEvent(QMouseEvent *event)
 {
+	if (event->button() == Qt::RightButton) {
+		m_rightPress = false;
+		if (m_panning) {
+			m_panning = false;
+			setCursor(Qt::ArrowCursor);
+		} else if (!m_pressMoved) {
+			showRffeMenu(event->globalPosition().toPoint());
+		}
+		return;
+	}
 	if (m_panning) {
 		m_panning = false;
 		setCursor(Qt::ArrowCursor);

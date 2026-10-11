@@ -138,6 +138,7 @@ void PdfView::clear()
 		m_pageSpin->setMaximum(1);
 		m_pageSpin->setEnabled(false);
 	}
+	emit occurrencesChanged(QString(), QStringList());
 }
 
 #ifdef W2R_HAVE_PDF
@@ -155,6 +156,25 @@ void PdfView::onMatchCountChanged()
 {
 	const int count = m_search->count();
 	m_matchCount->setText(QStringLiteral("  %1 matches").arg(count));
+
+	// Feed the Occurrences panel: one label per hit (page + surrounding context).
+	QStringList labels;
+	labels.reserve(count);
+	for (int i = 0; i < count; ++i) {
+		const QPdfLink link = m_search->resultAtIndex(i);
+		if (!link.isValid()) {
+			labels << QStringLiteral("Page ?");
+			continue;
+		}
+		const QString before = link.contextBefore().trimmed().right(32);
+		const QString after = link.contextAfter().trimmed().left(32);
+		labels << QStringLiteral("Page %1   …%2  ▸  %3…")
+		              .arg(link.page() + 1)
+		              .arg(before)
+		              .arg(after);
+	}
+	emit occurrencesChanged(m_searchEdit->text().trimmed(), labels);
+
 	if (count > 0) {
 		m_currentMatch = 0;
 		jumpToMatch(0);
@@ -185,6 +205,16 @@ void PdfView::searchNet(const QString &net)
 	m_currentMatch = 0;
 #else
 	Q_UNUSED(net);
+#endif
+}
+
+void PdfView::activateMatch(int index)
+{
+#ifdef W2R_HAVE_PDF
+	m_currentMatch = index;
+	jumpToMatch(index);
+#else
+	Q_UNUSED(index);
 #endif
 }
 

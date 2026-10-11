@@ -8,6 +8,7 @@
 #pragma once
 
 #include <QString>
+#include <QStringList>
 #include <QWidget>
 
 #ifdef W2R_HAVE_PDF
@@ -44,10 +45,14 @@ class PdfView : public QWidget {
 	void fitWidth();
 	void nextMatch();
 	void prevMatch();
+	// Jump to the n-th search hit (used by the Occurrences panel).
+	void activateMatch(int index);
 
   signals:
 	// Emitted when the user searches in the PDF (to highlight the net on the PCB).
 	void netSearched(const QString &text);
+	// Emitted after search results change: the search string and one label per hit.
+	void occurrencesChanged(const QString &net, const QStringList &labels);
 
   private slots:
 	void onSearchSubmitted();
