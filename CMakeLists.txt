@@ -55,6 +55,7 @@ qt_add_executable(w2r-open
   src/core/rffe/RffeFlasher.cpp
   src/core/rffe/RffeModel.cpp
   src/core/rffe/RffeProbe.cpp
+  src/core/rffe/RffeTheme.cpp
   src/ui/LibraryPanel.cpp
   src/ui/MainWindow.cpp
   src/ui/NetInspector.cpp
@@ -64,6 +65,11 @@ qt_add_executable(w2r-open
   src/ui/PreferencesDialog.cpp
   src/ui/RffePanel.cpp
   src/ui/ThemeEditorDialog.cpp
+  src/ui/rffe/RffeFlashDialog.cpp
+  src/ui/rffe/RffePromptDialog.cpp
+  src/ui/rffe/RffeSettingsDialog.cpp
+  src/ui/rffe/RffeShieldList.cpp
+  src/ui/rffe/RffeWidgets.cpp
 )
 
 # Embedded builtin PCB themes (imported from the original app).

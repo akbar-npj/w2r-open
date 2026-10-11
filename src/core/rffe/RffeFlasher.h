@@ -30,6 +30,13 @@ class RffeFlasher : public QObject {
 	// Name of the discovered esptool executable, or empty if none was found.
 	static QString esptoolProgram();
 
+	// Resolves and validates the firmware image before flashing: it reads the manifest,
+	// checks the image stays inside the firmware folder, matches the manifest's sha256,
+	// is large enough and carries the ESP32 image marker (0xE9), and that it targets the
+	// probe's 4MB flash. Returns the image path on success, or an empty string with
+	// *error set to the reason (the original app's manifest-validation wording).
+	static QString validatedFirmware(const QString &explicitPath, QString *error);
+
 	bool isBusy() const { return m_busy; }
 
 	// Starts flashing `port` with `firmwarePath` (defaults to the bundled image).

@@ -1,11 +1,13 @@
 #include "core/rffe/RffeFlasher.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonParseError>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QStandardPaths>
@@ -17,6 +19,10 @@ constexpr const char *kDefaultFirmware = "rffe-open-1.0.0.bin";
 constexpr const char *kManifestName = "manifest.json";
 constexpr const char *kDefaultOffset = "0x10000"; // app partition, per firmware/manifest.json
 constexpr int kFlashBaud = 460800;
+// The probe's ESP32-WROOM has 4MB of flash; anything smaller cannot be a real app image.
+constexpr qint64 kMinImageSize = 4096;
+constexpr quint8 kEsp32ImageMagic = 0xE9;
+constexpr const char *kProbeFlashSize = "4MB";
 
 // Directories that may contain the bundled firmware, in priority order.
 QStringList firmwareDirs()
@@ -97,13 +103,105 @@ QString RffeFlasher::esptoolProgram()
 	return QString();
 }
 
+QString RffeFlasher::validatedFirmware(const QString &explicitPath, QString *error)
+{
+	const auto fail = [error](const QString &msg) {
+		if (error) *error = msg;
+		return QString();
+	};
+
+	// An explicit path bypasses the manifest but still has to be a plausible ESP32 image.
+	if (!explicitPath.isEmpty()) {
+		QFile f(explicitPath);
+		if (!f.exists())
+			return fail(tr("No firmware is installed — %1 is missing.").arg(explicitPath));
+		if (f.size() < kMinImageSize)
+			return fail(tr("The firmware file is too small to be a firmware image."));
+		if (f.open(QIODevice::ReadOnly)) {
+			if (static_cast<quint8>(f.read(1).at(0)) != kEsp32ImageMagic)
+				return fail(tr("The firmware file is not a valid image: it does not start with "
+				               "the ESP32 image marker (0xE9)."));
+		}
+		return explicitPath;
+	}
+
+	// Locate the manifest next to the bundled image.
+	QString manifestPath;
+	QString firmwareDir;
+	for (const QString &dir : firmwareDirs()) {
+		const QString candidate = QDir(dir).filePath(QLatin1String(kManifestName));
+		if (QFileInfo::exists(candidate)) {
+			manifestPath = candidate;
+			firmwareDir = dir;
+			break;
+		}
+	}
+	if (manifestPath.isEmpty())
+		return fail(tr("No firmware is installed — %1 is missing.")
+		                .arg(QDir(firmwareDirs().first()).filePath(QLatin1String(kManifestName))));
+
+	QFile mf(manifestPath);
+	if (!mf.open(QIODevice::ReadOnly))
+		return fail(tr("The firmware manifest is unreadable — %1.").arg(manifestPath));
+	const QByteArray raw = mf.readAll();
+	mf.close();
+
+	QJsonParseError parseError{};
+	const QJsonObject o = QJsonDocument::fromJson(raw, &parseError).object();
+	if (parseError.error != QJsonParseError::NoError)
+		return fail(tr("The firmware manifest is unreadable — %1.").arg(manifestPath));
+
+	const QString file = o.value(QStringLiteral("file")).toString();
+	if (file.isEmpty())
+		return fail(tr("The firmware manifest names no image file."));
+
+	// The image must stay inside the firmware folder — no path traversal.
+	const QString abs = QDir::cleanPath(QDir(firmwareDir).filePath(file));
+	const QString cleanDir = QDir::cleanPath(firmwareDir);
+	if (!abs.startsWith(cleanDir + QLatin1Char('/')))
+		return fail(tr("The firmware manifest points outside the firmware folder."));
+
+	const QString sha = o.value(QStringLiteral("sha256")).toString().trimmed().toLower();
+	if (sha.isEmpty())
+		return fail(tr("The firmware manifest carries no sha256."));
+
+	QFile f(abs);
+	if (!f.exists())
+		return fail(tr("No firmware is installed — %1 is missing.").arg(abs));
+	if (!f.open(QIODevice::ReadOnly))
+		return fail(tr("The firmware manifest is unreadable — %1.").arg(abs));
+
+	const QByteArray data = f.readAll();
+	f.close();
+	if (data.size() < kMinImageSize)
+		return fail(tr("The firmware file is too small to be a firmware image."));
+	if (static_cast<quint8>(data.at(0)) != kEsp32ImageMagic)
+		return fail(tr("The firmware file is not a valid image: it does not start with the "
+		               "ESP32 image marker (0xE9)."));
+
+	const QString digest =
+	    QString::fromLatin1(QCryptographicHash::hash(data, QCryptographicHash::Sha256).toHex());
+	if (digest.compare(sha, Qt::CaseInsensitive) != 0)
+		return fail(tr("The firmware file does not match its manifest."));
+
+	// The probe's ESP32-WROOM has 4MB; reject an image built for another flash size.
+	const QString flashSize = o.value(QStringLiteral("flashSize")).toString().trimmed();
+	if (!flashSize.isEmpty() && flashSize.compare(QLatin1String(kProbeFlashSize), Qt::CaseInsensitive) != 0)
+		return fail(tr("The firmware is built for a %1 flash chip; the probe has 4MB.").arg(flashSize));
+
+	return abs;
+}
+
 void RffeFlasher::start(const QString &port, const QString &firmwarePath)
 {
 	if (m_busy) return;
 
-	const QString firmware = firmwarePath.isEmpty() ? bundledFirmwarePath() : firmwarePath;
+	QString validationError;
+	const QString firmware = validatedFirmware(firmwarePath, &validationError);
 	if (firmware.isEmpty()) {
-		emit finished(false, tr("Probe firmware image not found."));
+		emit finished(false, validationError.isEmpty()
+		                         ? tr("Probe firmware image not found.")
+		                         : validationError);
 		return;
 	}
 	if (port.isEmpty()) {

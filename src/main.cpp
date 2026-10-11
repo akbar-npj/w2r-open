@@ -11,11 +11,17 @@
 #include "core/rffe/RffeFlasher.h"
 #include "core/rffe/RffeModel.h"
 #include "core/rffe/RffeProbe.h"
+#include "core/rffe/RffeTheme.h"
 #include "ui/MainWindow.h"
 #include "ui/PcbView.h"
+#include "ui/RffePanel.h"
+#include "ui/rffe/RffeFlashDialog.h"
+#include "ui/rffe/RffePromptDialog.h"
+#include "ui/rffe/RffeSettingsDialog.h"
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QDir>
 #include <QFile>
 #include <QImage>
 #include <QJsonArray>
@@ -480,6 +486,180 @@ int runRffeSelftest()
 	return failures == 0 ? 0 : 1;
 }
 
+// Round-trips the RFFE UI palette (the original app's RFFE_* colour tokens) through its JSON
+// schema, verifies every token resolves, and that the stylesheet builder leaves no "@RFFE_*"
+// placeholder unsubstituted. Test-suite aid.
+int runRffePaletteSelftest()
+{
+	using namespace w2r::rffe;
+
+	int failures = 0;
+	auto check = [&failures](const QString &what, bool ok) {
+		if (!ok) {
+			std::fprintf(stderr, "FAIL: %s\n", what.toUtf8().constData());
+			++failures;
+		}
+	};
+
+	const Palette pal = Palette::defaultPalette();
+
+	// The 26 recovered tokens, in the original app's order.
+	const char *tokens[] = {
+	    "RFFE_BG",             "RFFE_BACKDROP_DOT",  "RFFE_SURFACE",       "RFFE_SURFACE_RAISED",
+	    "RFFE_SURFACE_SUNKEN", "RFFE_BORDER",        "RFFE_BORDER_SOFT",   "RFFE_TEXT",
+	    "RFFE_TEXT_DIM",       "RFFE_TEXT_FAINT",    "RFFE_BRAND_RED",     "RFFE_ACCENT",
+	    "RFFE_ACCENT_STRONG",  "RFFE_ACCENT_INK",    "RFFE_ON_INK",        "RFFE_LED_ON",
+	    "RFFE_LED_ON_GLOW",    "RFFE_LED_OFF",       "RFFE_LED_DANGER",    "RFFE_LED_DANGER_GLOW",
+	    "RFFE_LED_SCAN",       "RFFE_LED_SCAN_GLOW", "RFFE_FOCUS_RING",    "RFFE_SHADOW_INSET",
+	    "RFFE_SHADOW_AMBIENT", "RFFE_SHADOW_CONTACT",
+	};
+	constexpr int kTokenCount = int(sizeof(tokens) / sizeof(tokens[0]));
+	check("26 tokens", kTokenCount == 26);
+
+	int valid = 0;
+	for (const char *t : tokens)
+		if (pal.color(QLatin1String(t)).isValid()) ++valid;
+	check("all tokens resolve", valid == kTokenCount);
+	check("unknown token invalid", !pal.color(QStringLiteral("RFFE_NOPE")).isValid());
+
+	// The stylesheet must have every placeholder resolved.
+	const QString qss = pal.styleSheet();
+	check("stylesheet non-empty", qss.size() > 200);
+	check("no @RFFE_ placeholder left", !qss.contains(QStringLiteral("@RFFE_")));
+	check("brand red substituted", qss.contains(pal.brandRed.name(QColor::HexRgb)));
+	check("surface substituted", qss.contains(pal.surface.name(QColor::HexRgb)));
+	check("card selector present", qss.contains(QStringLiteral("RffeCard")));
+	// Regression: prefix-colliding tokens must not leave a stray suffix (e.g. "#161a22_SUNKEN").
+	for (const char *suffix : {"_RAISED", "_SUNKEN", "_SOFT", "_DIM", "_FAINT", "_STRONG", "_INK"}) {
+		const QString s = QString::fromLatin1(suffix);
+		check(QStringLiteral("no ") + s + QStringLiteral(" remnant"), !qss.contains(s));
+	}
+
+	// JSON round-trip preserves every token colour.
+	const Palette rt = Palette::fromJson(pal.toJson());
+	bool same = true;
+	for (const char *t : tokens)
+		if (rt.color(QLatin1String(t)) != pal.color(QLatin1String(t))) same = false;
+	check("json round-trip", same);
+
+	// Settings persistence round-trip into a throwaway config home.
+	QTemporaryDir cfg;
+	if (cfg.isValid()) {
+		qputenv("XDG_CONFIG_HOME", cfg.path().toLocal8Bit());
+		Palette edited = pal;
+		edited.accent = QColor(0xff123456);
+		edited.save();
+		const Palette loaded = Palette::load();
+		check("settings accent", loaded.accent == QColor(0xff123456));
+	} else {
+		std::fprintf(stderr, "note: skipped settings round-trip (no temp dir)\n");
+	}
+
+	// The recovered per-dialog sheets: every %N arg must be substituted, and the shared
+	// RffE object names / fonts must be present.
+	struct SheetCase {
+		const char *name;
+		QString sheet;
+		const char *mustContain;
+	};
+	const SheetCase sheets[] = {
+	    {"flash", pal.flashDialogStyleSheet(), "QWidget#rffeFlashCard"},
+	    {"flash", pal.flashDialogStyleSheet(), "QScrollBar#rffeFlashLogBar"},
+	    {"settings", pal.settingsDialogStyleSheet(), "QWidget#rffeSettingsCard"},
+	    {"prompt", pal.promptDialogStyleSheet(), "QWidget#rffePromptCard"},
+	};
+	for (const SheetCase &sc : sheets) {
+		check(QStringLiteral("%1 sheet: %2 present").arg(QLatin1String(sc.name), QLatin1String(sc.mustContain)),
+		      sc.sheet.contains(QLatin1String(sc.mustContain)));
+		check(QStringLiteral("%1 sheet: no %%N left").arg(QLatin1String(sc.name)),
+		      !sc.sheet.contains(QLatin1Char('%')));
+	}
+
+	if (failures == 0) std::printf("rffe palette round-trip: OK\n");
+	return failures == 0 ? 0 : 1;
+}
+
+// Constructs the RFFE dialog set + panel offscreen, renders each to a PNG and checks the
+// basic interaction invariants. Used for the visual/render verification pass; an optional
+// output directory keeps the PNGs (otherwise a throwaway dir is used).
+int runRffeDialogSelftest(const QString &outDir)
+{
+	qputenv("QT_QPA_PLATFORM", "offscreen");
+	qputenv("W2R_NO_SETTINGS", "1");
+	QTemporaryDir tmp;
+	if (tmp.isValid()) {
+		// Isolate the per-user store so the panel starts from a clean slate.
+		qputenv("XDG_DATA_HOME", tmp.path().toLocal8Bit());
+		qputenv("XDG_CONFIG_HOME", tmp.path().toLocal8Bit());
+	}
+	static int fakeArgc = 1;
+	static char arg0[] = "w2r-open";
+	static char *fakeArgv[] = {arg0, nullptr};
+	QApplication app(fakeArgc, fakeArgv);
+
+	using namespace w2r;
+	using namespace w2r::rffe;
+
+	int failures = 0;
+	auto check = [&failures](const char *what, bool ok) {
+		if (!ok) {
+			std::fprintf(stderr, "FAIL: %s\n", what);
+			++failures;
+		}
+	};
+
+	const Palette pal = Palette::defaultPalette();
+
+	const QString dir = outDir.isEmpty() ? (tmp.isValid() ? tmp.path() : QString()) : outDir;
+	if (!dir.isEmpty()) QDir().mkpath(dir);
+
+	// The dialogs and the panel each install their own stylesheet in their constructor.
+	auto render = [&](QWidget &w, const QString &name) -> bool {
+		w.resize(w.sizeHint().expandedTo(QSize(380, 260)));
+		w.show();
+		QCoreApplication::processEvents();
+		QImage img(w.size(), QImage::Format_ARGB32);
+		img.fill(Qt::black);
+		QPainter p(&img);
+		w.render(&p);
+		p.end();
+		if (img.isNull()) return false;
+		if (dir.isEmpty()) return true;
+		const QString path = QDir(dir).filePath(name + QStringLiteral(".png"));
+		const bool ok = img.save(path);
+		if (ok)
+			std::printf("wrote %s (%dx%d)\n", path.toUtf8().constData(), img.width(), img.height());
+		return ok;
+	};
+
+	// Settings dialog: build, render, verify defaults survive a no-op construction.
+	const MarkSettings ms;
+	RffeSettingsDialog settings(pal, ms);
+	check("settings dialog renders", render(settings, QStringLiteral("rffe-settings")));
+	check("settings defaults kept", settings.settings().markBlinkMs == ms.markBlinkMs);
+
+	// Prompt dialog: the initial text round-trips through text().
+	RffePromptDialog prompt(pal, QStringLiteral("Rename Shield"),
+	                        QStringLiteral("New shield name for %1:").arg(QStringLiteral("SHIELD_RFFE1")),
+	                        QStringLiteral("SHIELD_RFFE1"));
+	check("prompt initial text", prompt.text() == QStringLiteral("SHIELD_RFFE1"));
+	check("prompt dialog renders", render(prompt, QStringLiteral("rffe-prompt")));
+
+	// Flash dialog: builds against a flasher without starting a transfer.
+	RffeFlasher flasher;
+	RffeFlashDialog flash(pal, &flasher, QStringLiteral("COM3"));
+	check("flash dialog renders", render(flash, QStringLiteral("rffe-flash")));
+
+	// Panel: the full card-styled RFFE dock.
+	RffePanel panel;
+	panel.addTestPoint(QStringLiteral("C2406_E"), QStringLiteral("PP_1V8_LDO6"), int(Role::V1V8));
+	check("panel marked nets", panel.markedNets().contains(QStringLiteral("PP_1V8_LDO6")));
+	check("panel renders", render(panel, QStringLiteral("rffe-panel")));
+
+	if (failures == 0) std::printf("rffe dialog set: OK\n");
+	return failures == 0 ? 0 : 1;
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -561,6 +741,19 @@ int main(int argc, char **argv)
 
 	// RFFE shields/test-points store round-trip (test-suite aid).
 	if (args.contains(QStringLiteral("--rffe-selftest"))) return runRffeSelftest();
+
+	// RFFE UI palette (RFFE_* token) round-trip + stylesheet substitution (test-suite aid).
+	if (args.contains(QStringLiteral("--rffe-palette-selftest"))) return runRffePaletteSelftest();
+
+	// RFFE dialog set + panel render verification (test-suite aid). Optional output dir keeps PNGs.
+	const int rdsIdx = args.indexOf(QStringLiteral("--rffe-dialog-selftest"));
+	if (rdsIdx >= 0) {
+		const QString outDir =
+		    (rdsIdx + 1 < args.size() && !args[rdsIdx + 1].startsWith(QLatin1Char('-')))
+		        ? args[rdsIdx + 1]
+		        : QString();
+		return runRffeDialogSelftest(outDir);
+	}
 
 	QApplication app(argc, argv);
 	app.setApplicationName(QStringLiteral("w2r-open"));

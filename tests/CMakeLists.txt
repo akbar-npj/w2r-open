@@ -36,3 +36,9 @@ add_test(NAME theme_selftest COMMAND $<TARGET_FILE:w2r-open> --theme-selftest)
 
 # RFFE shields / test-points store round-trip.
 add_test(NAME rffe_selftest COMMAND $<TARGET_FILE:w2r-open> --rffe-selftest)
+
+# RFFE UI palette (RFFE_* colour tokens) JSON round-trip + stylesheet substitution.
+add_test(NAME rffe_palette_selftest COMMAND $<TARGET_FILE:w2r-open> --rffe-palette-selftest)
+
+# RFFE dialog set + panel render verification (offscreen).
+add_test(NAME rffe_dialog_selftest COMMAND $<TARGET_FILE:w2r-open> --rffe-dialog-selftest)

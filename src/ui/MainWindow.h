@@ -118,6 +118,7 @@ class MainWindow : public QMainWindow {
 	QMenu *m_fileMenu = nullptr;
 	QMenu *m_viewMenu = nullptr;
 	QMenu *m_themeMenu = nullptr;
+	QMenu *m_rffeMenu = nullptr;
 	QMenu *m_helpMenu = nullptr;
 	QMenu *m_languageMenu = nullptr;
 	QTranslator *m_translator = nullptr;

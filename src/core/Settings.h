@@ -24,6 +24,10 @@ void setThemeName(const QString &name);
 QByteArray userThemes();
 void setUserThemes(const QByteArray &json);
 
+// RFFE panel UI palette (the original app's RFFE_* token colours), stored as a JSON object.
+QByteArray rffePalette();
+void setRffePalette(const QByteArray &json);
+
 bool showDiodeReadings();
 void setShowDiodeReadings(bool on);
 

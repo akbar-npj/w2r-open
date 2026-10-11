@@ -572,6 +572,7 @@ void MainWindow::retranslateMenus()
 	if (m_fileMenu) m_fileMenu->setTitle(tr("&File"));
 	if (m_viewMenu) m_viewMenu->setTitle(tr("&View"));
 	if (m_themeMenu) m_themeMenu->setTitle(tr("&Theme"));
+	if (m_rffeMenu) m_rffeMenu->setTitle(tr("&RFFE"));
 	if (m_helpMenu) m_helpMenu->setTitle(tr("&Help"));
 	if (m_languageMenu) m_languageMenu->setTitle(tr("&Language"));
 }
@@ -704,6 +705,42 @@ void MainWindow::buildMenus()
 	connect(themeEdit, &QAction::triggered, this, &MainWindow::onThemeEdit);
 	QAction *themeDelete = theme->addAction(QStringLiteral("&Delete Current Theme"));
 	connect(themeDelete, &QAction::triggered, this, &MainWindow::onThemeDelete);
+
+	// RFFE: probe panel + the original app's RFFE entry points.
+	QMenu *rffe = menuBar()->addMenu(tr("&RFFE"));
+	m_rffeMenu = rffe;
+	QAction *rffeShow = rffe->addAction(QStringLiteral("Open RFFE &Panel"));
+	rffeShow->setCheckable(true);
+	rffeShow->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+R")));
+	if (m_rffeAction) rffeShow->setChecked(m_rffeAction->isChecked());
+	connect(rffeShow, &QAction::toggled, this, [this](bool on) {
+		if (!m_rffeDock) return;
+		m_rffeDock->setVisible(on);
+		if (on) m_rffeDock->raise();
+	});
+	// Keep the menu check in sync when the dock is toggled from the toolbar.
+	if (m_rffeAction) {
+		connect(m_rffeAction, &QAction::toggled, rffeShow, &QAction::setChecked);
+		connect(rffeShow, &QAction::toggled, m_rffeAction, &QAction::setChecked);
+	}
+	rffe->addSeparator();
+	QAction *rffeFirmware = rffe->addAction(QStringLiteral("&Update Probe Firmware..."));
+	connect(rffeFirmware, &QAction::triggered, this, [this] {
+		if (m_rffe) m_rffe->openFlashDialog();
+	});
+	QAction *rffeSettings = rffe->addAction(QStringLiteral("RFFE &Settings..."));
+	connect(rffeSettings, &QAction::triggered, this, [this] {
+		if (m_rffe) m_rffe->openSettingsDialog();
+	});
+	rffe->addSeparator();
+	QAction *rffeBlink = rffe->addAction(QStringLiteral("&Blink RFFE Nets"));
+	connect(rffeBlink, &QAction::triggered, this, [this] {
+		if (m_view) m_view->blinkRffeNets();
+	});
+	QAction *rffeExport = rffe->addAction(QStringLiteral("&Export RFFE Test Points..."));
+	connect(rffeExport, &QAction::triggered, this, [this] {
+		if (m_rffe) m_rffe->exportTestPoints();
+	});
 
 	QMenu *help = menuBar()->addMenu(tr("&Help"));
 	m_helpMenu = help;

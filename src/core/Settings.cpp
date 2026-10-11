@@ -66,6 +66,18 @@ void setUserThemes(const QByteArray &json)
 	s.setValue(QStringLiteral("themes/user"), json);
 }
 
+QByteArray rffePalette()
+{
+	return store().value(QStringLiteral("rffe/palette")).toByteArray();
+}
+
+void setRffePalette(const QByteArray &json)
+{
+	if (!writable()) return;
+	QSettings s = store();
+	s.setValue(QStringLiteral("rffe/palette"), json);
+}
+
 bool showDiodeReadings()
 {
 	return store().value(QStringLiteral("view/showDiode"), true).toBool();
