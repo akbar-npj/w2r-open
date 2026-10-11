@@ -89,6 +89,13 @@ w2r-open --rffe-info                  # RFFE probe environment
 w2r-open --theme-selftest             # theme serialisation round-trip check
 ```
 
+## Documentation
+
+Full documentation lives in **[docs/Home.md](docs/Home.md)** (the project wiki): getting started,
+the boardview viewer, schematics and cross-probing, diode readings, the device library, the RFFE
+probe, themes, views and animations, preferences, and the cloud/DRM features that are
+intentionally omitted.
+
 ## Licence and provenance
 
 W2R Open is MIT-licensed (see [LICENSE](LICENSE)). Boardview parsing is adapted from
